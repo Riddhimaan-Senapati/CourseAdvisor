@@ -1,2 +1,4 @@
 #remove the venv
 /.venv
+#remove the pycache
+/__pycache__
