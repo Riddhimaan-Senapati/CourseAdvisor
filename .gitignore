@@ -2,3 +2,5 @@
 /.venv
 #remove the pycache
 /__pycache__
+#remove the .env file
+/.env

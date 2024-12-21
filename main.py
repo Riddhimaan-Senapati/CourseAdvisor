@@ -1,25 +1,28 @@
-from openai import OpenAI
 import streamlit as st
 from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
+import tempfile
+import os
+import chromadb
+from chromadb.config import Settings
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+from groq import Groq
+from dotenv import load_dotenv
+load_dotenv()
 
-# Streamlit Sidebar for API Key Input
-with st.sidebar:
-    openai_api_key = st.text_input("OpenAI API Key", key="chatbot_api_key", type="password")
-    "[Get an OpenAI API key](https://platform.openai.com/account/api-keys)"
-    "[View the source code](https://github.com/Riddhimaan-Senapati/CourseAdvisor)"
 
 st.title("💬 Chatbot")
-st.caption("🚀 A Streamlit chatbot powered by OpenAI")
+st.caption("🚀 A Streamlit chatbot powered by Groq")
 
 # File uploader for document input
 uploaded_file = st.file_uploader("Upload a PDF article", type="pdf")
 
-# Initialize message history
+# Initialize message history and vector store in session state
 if "messages" not in st.session_state:
     st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
+if "vector_store" not in st.session_state:
+    st.session_state["vector_store"] = None
 
 # Display chat messages
 for msg in st.session_state.messages:
@@ -27,43 +30,70 @@ for msg in st.session_state.messages:
 
 # Process user input and generate responses
 if prompt := st.chat_input():
-    if not openai_api_key:
-        st.info("Please add your OpenAI API key to continue.")
+    if not uploaded_file:
+        st.info("Please upload a PDF file to continue.")
         st.stop()
 
-    # Initialize OpenAI client
-    client = OpenAI(api_key=openai_api_key)
+    # Initialize Groq client
+    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
     # Append user message to session state
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
 
-    # Handle document embeddings if a file is uploaded
-    if uploaded_file is not None:
-        # Read the uploaded PDF file content
-        loader = PyPDFLoader(uploaded_file.name)
-        docs = loader.load()
+    # Check if vector store is already created; if not, process the uploaded PDF
+    if st.session_state.vector_store is None:
+        with st.spinner("Processing PDF File... This may take a while ⏳"):
+            # Save the uploaded PDF to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                temp_file_path = tmp_file.name
+            
+            # Load the PDF using PyPDFLoader from the temporary file path
+            loader = PyPDFLoader(temp_file_path)
+            docs = loader.load()
 
-        # Create embeddings for the document using OpenAI's embedding model
-        # Split the documents
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
-            length_function=len,
-            is_separator_regex=False)
-        splits = text_splitter.split_documents(docs)
-        embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key,model="text-embedding-3-large")
-        # Store the embedding temporarily in ChromaDB
-        vector_store = Chroma(embedding_function=embeddings)
-        _ = vector_store.add_documents(documents=splits)
+            # Split the documents into manageable chunks
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                length_function=len,
+                is_separator_regex=False)
+            
+            splits = text_splitter.split_documents(docs)
 
+            # Initialize Hugging Face Embeddings model
+            model_name = "sentence-transformers/all-mpnet-base-v2"  # Choose your desired model here
+            hf_embeddings = HuggingFaceEmbeddings(model_name=model_name)
 
-    # Create a retriever from the vector store
-    retriever = vector_store.as_retriever()
-    retrieved_docs = retriever.get_relevant_documents(prompt)
+            # Generate embeddings for the document splits
+            document_texts = [split.page_content for split in splits]
+            embeddings = hf_embeddings.embed_documents(document_texts)
+
+            # Store the embedding temporarily in ChromaDB
+            chroma_client = chromadb.PersistentClient(
+                path="/tmp/.chroma",
+                settings=Settings()
+            )
+
+            vector_store = Chroma(
+                embedding_function=hf_embeddings,  # Pass embed_documents method directly
+                client=chroma_client  # Pass the persistent client here
+            )
+            
+            _ = vector_store.add_documents(documents=splits)  # Add documents directly
+
+            # Save vector store to session state for future use
+            st.session_state.vector_store = vector_store
+
+        st.success("PDF processed successfully!")
+
+    # Create a retriever from the vector store and get relevant documents based on user input
+    retriever = st.session_state.vector_store.as_retriever()
+    retrieved_docs = retriever.invoke(prompt)
 
     # Prepare context for the LLM response
-    context = "\n\n".join(doc for doc in retrieved_docs)
+    context = "\n\n".join(doc.page_content for doc in retrieved_docs)
 
     # Define a system message to guide the LLM's behavior
     system_message = {
@@ -74,11 +104,13 @@ if prompt := st.chat_input():
     # Combine system message, context, and conversation history for LLM input
     messages_for_llm = [system_message] + st.session_state.messages + [{"role": "user", "content": context + "\n" + prompt}]
 
-    # Generate a response from OpenAI's model using context and conversation history
-    response = client.chat.completions.create(model="gpt-3.5-turbo", messages=messages_for_llm)
-    
+    # Generate a response from Groq's model using context and conversation history
+    chat_completion = client.chat.completions.create(
+        messages=messages_for_llm,
+        model="llama3-70b-8192"  # Specify your desired model here
+    )
+
     # Extract and display assistant's response
-    msg = response.choices[0].message.content
+    msg = chat_completion.choices[0].message.content  # Adjust based on actual response structure from Groq API
     st.session_state.messages.append({"role": "assistant", "content": msg})
     st.chat_message("assistant").write(msg)
-
