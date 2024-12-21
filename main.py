@@ -55,7 +55,7 @@ if prompt := st.chat_input():
 
             # Split the documents into manageable chunks
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
+                chunk_size=2500,
                 chunk_overlap=200,
                 length_function=len,
                 is_separator_regex=False)
@@ -98,7 +98,10 @@ if prompt := st.chat_input():
     # Define a system message to guide the LLM's behavior
     system_message = {
         "role": "system",
-        "content": "You are a helpful assistant knowledgeable about the content of the uploaded PDF document."
+        "content": """You are a course advisor meant to help students choose the courses that they are most suitable for.
+        You will be given some information about a course and you need to use that to explain a user's prompt.
+        If they ask about a course, give it's id as well for ex: Tell me about a course in AI: One such course is CS XXX
+        (replace with an actual number here)"""
     }
 
     # Combine system message, context, and conversation history for LLM input
@@ -114,3 +117,10 @@ if prompt := st.chat_input():
     msg = chat_completion.choices[0].message.content  # Adjust based on actual response structure from Groq API
     st.session_state.messages.append({"role": "assistant", "content": msg})
     st.chat_message("assistant").write(msg)
+    
+    # Create a clickable button
+    # Source documents
+    with st.expander("Source documents"):
+        st.write(context)
+
+    
