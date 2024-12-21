@@ -3,11 +3,10 @@ from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 import tempfile
-import os
 import chromadb
 from chromadb.config import Settings
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from groq import Groq
+import aisuite as ai
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -35,7 +34,7 @@ if prompt := st.chat_input():
         st.stop()
 
     # Initialize Groq client
-    client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+    client = ai.Client()
 
     # Append user message to session state
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -55,7 +54,7 @@ if prompt := st.chat_input():
 
             # Split the documents into manageable chunks
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=2500,
+                chunk_size=1200,
                 chunk_overlap=200,
                 length_function=len,
                 is_separator_regex=False)
@@ -110,7 +109,7 @@ if prompt := st.chat_input():
     # Generate a response from Groq's model using context and conversation history
     chat_completion = client.chat.completions.create(
         messages=messages_for_llm,
-        model="llama3-70b-8192"  # Specify your desired model here
+        model="groq:llama3-70b-8192"  # Specify your desired model here
     )
 
     # Extract and display assistant's response
