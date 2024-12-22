@@ -1,13 +1,17 @@
 import streamlit as st
-from langchain_chroma import Chroma
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader
 import tempfile
 import chromadb
-from chromadb.config import Settings
-from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 import aisuite as ai
 from dotenv import load_dotenv
+from llama_index.packs.raptor import RaptorPack
+import nest_asyncio
+from llama_index.core import SimpleDirectoryReader
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.llms.groq import Groq
+from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.core import Settings
+
 load_dotenv()
 
 
@@ -20,8 +24,8 @@ uploaded_file = st.file_uploader("Upload a PDF article", type="pdf")
 # Initialize message history and vector store in session state
 if "messages" not in st.session_state:
     st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
-if "vector_store" not in st.session_state:
-    st.session_state["vector_store"] = None
+if "raptor_pack" not in st.session_state:
+    st.session_state["raptor_pack"] = None
 
 # Display chat messages
 for msg in st.session_state.messages:
@@ -41,58 +45,49 @@ if prompt := st.chat_input():
     st.chat_message("user").write(prompt)
 
     # Check if vector store is already created; if not, process the uploaded PDF
-    if st.session_state.vector_store is None:
+    if st.session_state.raptor_pack is None:
         with st.spinner("Processing PDF File... This may take a while ⏳"):
             # Save the uploaded PDF to a temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
                 tmp_file.write(uploaded_file.getvalue())
                 temp_file_path = tmp_file.name
             
-            # Load the PDF using PyPDFLoader from the temporary file path
-            loader = PyPDFLoader(temp_file_path)
-            docs = loader.load()
+            nest_asyncio.apply()
 
-            # Split the documents into manageable chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1200,
-                chunk_overlap=200,
-                length_function=len,
-                is_separator_regex=False)
+            documents = SimpleDirectoryReader(input_files=[temp_file_path]).load_data()
+
+            settings=Settings
+            settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            from chromadb.config import Settings
+            chroma_client = chromadb.PersistentClient(path="/tmp/.chroma", settings=Settings())
+            embedding_model_name = "BAAI/bge-small-en-v1.5"  # Choose your desired model here
+            hf_embeddings = HuggingFaceEmbedding(model_name=embedding_model_name)
+            vector_store = ChromaVectorStore(
+                chroma_collection=chroma_client.get_or_create_collection(name='persistent_collection'),
+                embedding_function=hf_embeddings)
+            raptor_pack = RaptorPack(
+                documents,
+                embed_model=settings.embed_model,
+                llm=Groq(model="llama3-70b-8192", temperature=0.1),
+                vector_store=vector_store,  # used for storage
+                similarity_top_k=2,  # top k for each layer, or overall top-k for collapsed
+                mode="tree_traversal",  # sets default mode
+                transformations=[SentenceSplitter(chunk_size=2000, chunk_overlap=100)]) # transformations applied for ingestion
             
-            splits = text_splitter.split_documents(docs)
+            st.session_state.raptor_pack=raptor_pack
 
-            # Initialize Hugging Face Embeddings model
-            model_name = "sentence-transformers/all-mpnet-base-v2"  # Choose your desired model here
-            hf_embeddings = HuggingFaceEmbeddings(model_name=model_name)
 
-            # Generate embeddings for the document splits
-            document_texts = [split.page_content for split in splits]
-            embeddings = hf_embeddings.embed_documents(document_texts)
 
-            # Store the embedding temporarily in ChromaDB
-            chroma_client = chromadb.PersistentClient(
-                path="/tmp/.chroma",
-                settings=Settings()
-            )
-
-            vector_store = Chroma(
-                embedding_function=hf_embeddings,  # Pass embed_documents method directly
-                client=chroma_client  # Pass the persistent client here
-            )
             
-            _ = vector_store.add_documents(documents=splits)  # Add documents directly
-
-            # Save vector store to session state for future use
-            st.session_state.vector_store = vector_store
 
         st.success("PDF processed successfully!")
 
-    # Create a retriever from the vector store and get relevant documents based on user input
-    retriever = st.session_state.vector_store.as_retriever()
-    retrieved_docs = retriever.invoke(prompt)
-
     # Prepare context for the LLM response
-    context = "\n\n".join(doc.page_content for doc in retrieved_docs)
+
+    nodes = st.session_state.raptor_pack.run(prompt, mode="tree_traversal")
+    context="\n".join([node.text for node in nodes])
+
+
 
     # Define a system message to guide the LLM's behavior
     system_message = {
@@ -100,7 +95,7 @@ if prompt := st.chat_input():
         "content": """You are a course advisor meant to help students choose the courses that they are most suitable for.
         You will be given some information about a course and you need to use that to explain a user's prompt.
         If they ask about a course, give it's id as well for ex: Tell me about a course in AI: One such course is CS XXX
-        (replace with an actual number here)"""
+        (replace with an actual number here) and instructors"""
     }
 
     # Combine system message, context, and conversation history for LLM input
@@ -119,7 +114,7 @@ if prompt := st.chat_input():
     
     # Create a clickable button
     # Source documents
-    with st.expander("Source documents"):
+    with st.expander("Source (summarized by LLM)"):
         st.write(context)
 
     
