@@ -80,7 +80,7 @@ if prompt := st.chat_input():
                 llm=OpenAI(model="gpt-3.5-turbo", temperature=0.1),
                 vector_store=vector_store,  # used for storage
                 similarity_top_k=2,  # top k for each layer, or overall top-k for collapsed
-                mode="tree_traversal",  # sets default mode
+                mode="collapsed",  # sets default mode
                 transformations=[SentenceSplitter(chunk_size=2000, chunk_overlap=100)]) # transformations applied for ingestion
             
             st.session_state.raptor_pack=raptor_pack
