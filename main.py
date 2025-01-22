@@ -12,6 +12,10 @@ from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.core import Settings
 import os
 
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 load_dotenv()
 
 with st.sidebar:
