@@ -1,7 +1,6 @@
 import streamlit as st
 import tempfile
 import chromadb
-import aisuite as ai
 from dotenv import load_dotenv
 from llama_index.packs.raptor import RaptorPack
 import nest_asyncio
@@ -47,7 +46,7 @@ if prompt := st.chat_input():
 
     # Initialize OpenAI client using aisuite library
     os.environ["OPENAI_API_KEY"] = openai_api_key
-    client = ai.Client()
+    client = OpenAI()
 
     # Append user message to session state
     st.session_state.messages.append({"role": "user", "content": prompt})
