@@ -1,6 +1,6 @@
 import ratemyprofessor
 import streamlit as st
-from components import create_donut_chart, create_percentage_donut
+from courseadvisor.pages.components import create_donut_chart, create_percentage_donut
 import pandas as pd
 
 # Title of the application
